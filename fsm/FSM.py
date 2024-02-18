@@ -156,14 +156,19 @@ class FSMState(object):
 
 
 class FSM(object):
-    def __init__(self, cfg, states=None):
+    def __init__(self, cfg):
         initial = cfg.get('initial')
         if initial is None:
             raise FSMConfigError("Config doesn't have 'initial' {}".format(cfg))
+        isCustomInitialEvent = 'event' in initial
+
         transitions = cfg.get('transitions')
         if transitions is None:
             raise FSMConfigError("Config doesn't have 'transitions' {}".format(cfg))
 
+        final = cfg.get('final', {}).get('state')
+
+        states = cfg.get('states')
         statesMap = {}
         if states is not None:
             for state in states:
@@ -171,19 +176,21 @@ class FSM(object):
             statesMap = {state.name: state for state in states}
 
         tmap = {}
+        self.__addStatesAndTransactions(_INIT_STATE, initial['state'], initial.get('event', _INIT_EVENT_NAME), statesMap, tmap)
         for transition in transitions:
             self.__addStatesAndTransactions(transition['src'], transition['dst'], transition['event'], statesMap, tmap)
-        self.__addStatesAndTransactions(_INIT_STATE, initial, _INIT_EVENT_NAME, statesMap, tmap)
 
         self.__statesMap = statesMap  # type: Dict[str, FSMState]
         self.__transactionMap = tmap  # type: Dict[str, Dict[str, str]]
         self.__currentState = _INIT_STATE
+        self.__final = final
         self.__newEvents = []  # type: List[Tuple[str, Any]]
         self.__isRunning = False
 
         self.evStateChanged = Event()
 
-        self.addEvent(_INIT_EVENT_NAME)
+        if not isCustomInitialEvent:
+            self.addEvent(_INIT_EVENT_NAME)
 
     def fini(self):
         for name in self.__statesMap:
@@ -203,8 +210,6 @@ class FSM(object):
         self.__isRunning = True
         try:
             self.__run()
-        except Exception as e:
-            print("Exception: {}".format(e))
         finally:
             self.__isRunning = False
 
@@ -212,11 +217,17 @@ class FSM(object):
         '''
             Returns if the given event be fired in the current machine state.
         '''
-        return (event in self.__transactionMap and
+        return (event in self.__transactionMap and not self.isFinished() and
                 ((self.__currentState in self.__transactionMap[event]) or WILDCARD in self.__transactionMap[event]))
 
     def getCurrentState(self):
         return self.__currentState
+
+    def isFinished(self):
+        '''
+            Returns if the state machine is in its final state.
+        '''
+        return self.__final and (self.__currentState == self.__final)
 
     def __run(self):
         while self.__newEvents:
