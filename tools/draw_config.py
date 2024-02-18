@@ -2,7 +2,7 @@ from graphviz import Digraph
 import json
 import os
 import time
-from fsm.fsm import Tokens
+from fsm._fsm import Tokens
 
 env = os.environ
 env["PATH"] += r'Lib\Graphviz2.38\bin'
