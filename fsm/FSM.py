@@ -1,32 +1,3 @@
-# coding=utf-8
-#
-# fysom - pYthOn Finite State Machine - this is a port of Jake
-#         Gordon's javascript-state-machine to python
-#         https://github.com/jakesgordon/javascript-state-machine
-#
-# Copyright (C) 2011 Mansour Behabadi <mansour@oxplot.com>, Jake Gordon
-#                                        and other contributors
-#
-# Permission is hereby granted, free of charge, to any person obtaining
-# a copy of this software and associated documentation files (the
-# "Software"), to deal in the Software without restriction, including
-# without limitation the rights to use, copy, modify, merge, publish,
-# distribute, sublicense, and/or sell copies of the Software, and to
-# permit persons to whom the Software is furnished to do so, subject to
-# the following conditions:
-#
-# The above copyright notice and this permission notice shall be
-# included in all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-# IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-# CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-# TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-#
-
 import functools
 import weakref
 import types
@@ -34,8 +5,7 @@ import sys
 from typing import Dict, Any
 from typing import List
 from typing import Tuple
-
-from fsm.Event import Event
+from .Event import Event
 
 PY3 = sys.version_info[0] >= 3
 
@@ -44,17 +14,16 @@ try:
 except ImportError:
     from collections import Mapping
 
-__author__ = 'Mansour Behabadi'
-__copyright__ = 'Copyright 2011, Mansour Behabadi and Jake Gordon'
+__author__ = 'Igor Belov'
+__copyright__ = 'Wargaming'
 __credits__ = ['Mansour Behabadi', 'Jake Gordon']
 __license__ = 'MIT'
 __version__ = '${version}'
-__maintainer__ = 'Mansour Behabadi'
-__email__ = 'mansour@oxplot.com'
+__maintainer__ = 'IYuBelov'
+__email__ = 'IYuBelov@gmail.com'
 
-
-WILDCARD = '*'
-SAME_DST = '='
+_ALL_STATES = '*'
+_SAME_DST = '='
 _INIT_STATE = 'none'
 _INIT_EVENT_NAME = 'evSetup'
 
@@ -218,7 +187,7 @@ class FSM(object):
             Returns if the given event be fired in the current machine state.
         '''
         return (event in self.__transactionMap and not self.isFinished() and
-                ((self.__currentState in self.__transactionMap[event]) or WILDCARD in self.__transactionMap[event]))
+                ((self.__currentState in self.__transactionMap[event]) or _ALL_STATES in self.__transactionMap[event]))
 
     def getCurrentState(self):
         return self.__currentState
@@ -246,9 +215,9 @@ class FSM(object):
         src = self.__currentState
         # Finds the destination state, after this event is completed.
         dst = ((src in self.__transactionMap[eventName] and self.__transactionMap[eventName][src]) or
-               WILDCARD in self.__transactionMap[eventName] and self.__transactionMap[eventName][WILDCARD])
+               _ALL_STATES in self.__transactionMap[eventName] and self.__transactionMap[eventName][_ALL_STATES])
 
-        if dst == SAME_DST:
+        if dst == _SAME_DST:
             dst = src
 
         if self.__currentState != dst:
@@ -369,7 +338,7 @@ class Fysom(object):
         '''
         return (
                 event in self.__map and
-                ((self.current in self.__map[event]) or WILDCARD in self.__map[event]) and not
+                ((self.current in self.__map[event]) or _ALL_STATES in self.__map[event]) and not
             hasattr(self, 'transition'))
 
     def cannot(self, event):
@@ -410,7 +379,7 @@ class Fysom(object):
                 src = [e['src']] if self.__is_base_string(
                     e['src']) else e['src']
             else:
-                src = [WILDCARD]
+                src = [_ALL_STATES]
             if e['name'] not in tmap:
                 tmap[e['name']] = {}
             for s in src:
@@ -463,8 +432,8 @@ class Fysom(object):
             src = self.current
             # Finds the destination state, after this event is completed.
             dst = ((src in self.__map[event] and self.__map[event][src]) or
-                   WILDCARD in self.__map[event] and self.__map[event][WILDCARD])
-            if dst == SAME_DST:
+                   _ALL_STATES in self.__map[event] and self.__map[event][_ALL_STATES])
+            if dst == _SAME_DST:
                 dst = src
 
             # Prepares the object with all the meta data to be passed to
@@ -727,7 +696,7 @@ class FysomGlobal(object):
                 src = [e['src']] if self._is_base_string(
                     e['src']) else e['src']
             else:
-                src = [WILDCARD]
+                src = [_ALL_STATES]
 
             _e = {'src': set(src), 'dst': e['dst']}
             conditions = e.get('cond')
@@ -890,7 +859,7 @@ class FysomGlobal(object):
         if event not in self._map or hasattr(obj, 'transition'):
             return False
         src = self._map[event]['src']
-        return self.current(obj) in src or WILDCARD in src
+        return self.current(obj) in src or _ALL_STATES in src
 
     def cannot(self, obj, event):
         return not self.can(obj, event)

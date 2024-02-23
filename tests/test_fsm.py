@@ -21,14 +21,25 @@ class Fly(FSMState):
         pass
 
 
+class PrepareAttack(FSMState):
+    def enter(self, prevState, eventData):  # type: (FSMState, Any) -> None
+        pass
+
+    def leave(self, eventData):
+        pass
+
+    def reenter(self, eventData):
+        print "REENTER", eventData
+
+
 
 
 CONFIG = {
     "initial": {"state": "prepare"},
     "transitions": [
         {"src": "prepare", "dst": "fly", "event": "evFly"},
-        {"src": "fly", "dst": "prepareAttack", "event": "evPrepareAttack"},
-        {"src": "prepareAttack", "dst": "attack", "event": "evAttack"},
+        {"src": ["fly", 'prepareAttack'], "dst": "prepareAttack", "event": "evPrepareAttack"},
+        {"src": "*", "dst": "attack", "event": "evAttack"},
         {"src": "attack", "dst": "prepareFly", "event": "evPrepareFly"},
         {"src": "prepareFly", "dst": "fly", "event": "evFly"},
         {"src": "attack", "dst": "comeback", "event": "evComeback"},
@@ -38,6 +49,7 @@ CONFIG = {
     "states": [
         Prepare('prepare'),
         Fly('fly'),
+        PrepareAttack('prepareAttack'),
     ],
 }
 
@@ -52,7 +64,18 @@ def test_sfm_init():
 
     assert sfm.getCurrentState() == 'fly'
 
-    #assert sfm.isFinished()
+    sfm.addEvent('evPrepareAttack')
+
+    assert sfm.getCurrentState() == 'prepareAttack'
+
+    sfm.addEvent('evPrepareAttack', {'Hellow': 1})
+
+    assert sfm.getCurrentState() == 'prepareAttack'
+
+
+    sfm.addEvent('evAttack')
+
+    assert sfm.getCurrentState() == 'attack'
 
     # with pytest.raises(Exception):
     #     sfm.addEvent("evComeback")
