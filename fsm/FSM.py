@@ -150,15 +150,18 @@ class FSM(object):
             raise FSMConfigError("Config doesn't have 'transitions' {}".format(cfg))
 
         dsts = set()
-        events = set()
-        events.add(initialEvent)
+        events = {}
         for transition in transitions:
+            src = transition['src']
             dst = transition['dst']
-            dsts.add(transition['src'] if dst == _SAME_DST else dst)
+            dsts.add(src if dst == _SAME_DST else dst)
             event = transition['event']
-            if event in events:
-                raise FSMConfigError("duplicated event {}".format(event))
-            events.add(transition['event'])
+            srcs = [src] if _is_base_string(src) else src
+            if src in srcs:
+                eventSet = events.get((src, dst), set())
+                if event in eventSet:
+                    raise FSMConfigError("duplicated event {}".format(event))
+                eventSet.add(transition['event'])
 
         final = cfg.get('final', None)
         if final is not None:
