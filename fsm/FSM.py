@@ -1,4 +1,5 @@
 import functools
+import json
 import weakref
 import types
 import sys
@@ -6,8 +7,13 @@ from typing import Dict, Any
 from typing import List
 from typing import Tuple
 from .Event import Event
+from typing import TYPE_CHECKING
 
-PY3 = sys.version_info[0] >= 3
+if TYPE_CHECKING:
+    from typing import Optional, TypedDict
+    from FSM import Config
+
+    PY3 = sys.version_info[0] >= 3
 
 try:
     from collections.abc import Mapping
@@ -24,8 +30,9 @@ __email__ = 'IYuBelov@gmail.com'
 
 _ALL_STATES = '*'
 _SAME_DST = '='
-_INIT_STATE = 'none'
-_INIT_EVENT_NAME = 'evSetup'
+_INIT_STATE = '__default_root_state'
+_INIT_EVENT_NAME = '__default_root_setup_event'
+
 
 class FSMError(Exception):
     pass
@@ -36,7 +43,6 @@ class FSMConfigError(Exception):
 
 
 class FysomError(Exception):
-
     '''
         Raised whenever an unexpected event gets triggered.
         Optionally the event object can be attached to the exception
@@ -49,7 +55,6 @@ class FysomError(Exception):
 
 
 class Canceled(FysomError):
-
     '''
         Raised when an event is canceled due to the
         onbeforeevent handler returning False
@@ -82,10 +87,12 @@ def _weak_callback(func):
             if (obj is None) or (func is None):
                 return
             return func(obj, *args, **kwargs)
+
         return _callback
     else:
         # We should be safe enough holding callback functions ourselves.
         return func
+
 
 def _is_base_string(obj):  # pragma: no cover
     '''
@@ -99,11 +106,19 @@ def _is_base_string(obj):  # pragma: no cover
 
 class FSMState(object):
     def __init__(self, name):  # type: (str) -> None
-        self.name = name
-        self.__fsm = None
+        self.__name = name
+        self.__fsm = None  # type: Optional[FSM]
 
     def __repr__(self):
         return 'State({!r}, {!r})'.format(self.name, self.__fsm)
+
+    @property
+    def name(self):
+        return self.__name
+
+    @property
+    def fsm(self):
+        return self.__fsm
 
     def fini(self):
         pass
@@ -125,50 +140,86 @@ class FSMState(object):
 
 
 class FSM(object):
-    def __init__(self, cfg):
+    def __init__(self, cfg):  # type: (Config) -> None
         initial = cfg.get('initial')
         if initial is None:
             raise FSMConfigError("Config doesn't have 'initial' {}".format(cfg))
-        isCustomInitialEvent = 'event' in initial
+        initialEvent = initial.get('event', _INIT_EVENT_NAME)
 
         transitions = cfg.get('transitions')
         if transitions is None:
             raise FSMConfigError("Config doesn't have 'transitions' {}".format(cfg))
 
-        final = cfg.get('final', {}).get('state')
+        dsts = set()
+        events = set()
+        events.add(initialEvent)
+        for transition in transitions:
+            dst = transition['dst']
+            dsts.add(transition['src'] if dst == _SAME_DST else dst)
+            event = transition['event']
+            if event in events:
+                raise FSMConfigError("duplicated event {}".format(event))
+            events.add(transition['event'])
+
+        final = cfg.get('final', None)
+        if final is not None:
+            if final not in dsts:
+                raise FSMConfigError("Final state '{}' doesn't have appropriate dst states".format(dsts))
 
         states = cfg.get('states')
         statesMap = {}
         if states is not None:
             for state in states:
+                if not isinstance(state, FSMState):
+                    raise FSMConfigError("State '{}' doesn't inherit FSMClass".format(state))
                 state.sync(self)
             statesMap = {state.name: state for state in states}
 
-        tmap = {}
-        self.__addStatesAndTransactions(_INIT_STATE, initial['state'], initial.get('event', _INIT_EVENT_NAME), statesMap, tmap)
+        transactionMap = {}
+        self.__addTransaction(_INIT_STATE, initial['state'], initialEvent, statesMap, transactionMap)
         for transition in transitions:
-            self.__addStatesAndTransactions(transition['src'], transition['dst'], transition['event'], statesMap, tmap)
+            self.__addTransaction(transition['src'], transition['dst'], transition['event'], statesMap, transactionMap)
 
         self.__statesMap = statesMap  # type: Dict[str, FSMState]
-        self.__transactionMap = tmap  # type: Dict[str, Dict[str, str]]
-        self.__currentState = _INIT_STATE
-        self.__final = final
+        self.__transactionMap = transactionMap  # type: Dict[str, Dict[str, str]]
+        self.__currentState = _INIT_STATE  # type: str
+        self.__final = final  # type: str
         self.__newEvents = []  # type: List[Tuple[str, Any]]
         self.__isRunning = False
+        self.__callbacks = {}
 
-        self.evStateChanged = Event()
-
+        isCustomInitialEvent = 'event' in initial
         if not isCustomInitialEvent:
             self.addEvent(_INIT_EVENT_NAME)
+
+    @classmethod
+    def makeSFMFromJSON(cls, json_file):  # type: (str) -> FSM
+        cfg = json.load(json_file)
+        return FSM(cfg)
 
     def fini(self):
         for name in self.__statesMap:
             self.__statesMap[name].fini()
         self.__statesMap.clear()
         self.__transactionMap.clear()
-        self.evStateChanged.clear()
+        self.__callbacks.clear()
         del self.__newEvents[:]
         self.__isRunning = False
+
+    def addCallback(self, fromState, toState, callback):
+        callbacks = self.__callbacks.get((fromState, toState), [])
+        if callback not in callbacks:
+            callbacks.append(callback)
+
+    def removeCallback(self, fromState, toState, callback):
+        callbacks = self.__callbacks.get((fromState, toState), [])
+        if callback in callbacks:
+            callbacks.remove(callback)
+
+    def __callCallbacks(self, fromState, toState):
+        callbacks = self.__callbacks.get((fromState, toState), [])
+        for callback in callbacks:
+            callback(fromState, toState)
 
     def addEvent(self, eventName, eventData=None):
         self.__newEvents.append((eventName, eventData))
@@ -228,35 +279,28 @@ class FSM(object):
             currentState = self.__statesMap[self.__currentState]
             currentState.enter(prevState, eventData)
 
-            self.evStateChanged(prevState, currentState)
+            self.__callCallbacks(prevState, currentState)
         else:
             currentState = self.__statesMap[self.__currentState]
             currentState.reenter(eventData)
 
-    def __addStatesAndTransactions(self, src, dst, event, statesMap, tmap):
+    def __addTransaction(self, src, dst, event, statesMap, transactionMap):
         src = [src] if _is_base_string(src) else src
         transactionStates = src + [dst]
         for stateName in transactionStates:
-            if stateName in statesMap:
-                if not isinstance(statesMap[stateName], FSMState):
-                    raise FSMConfigError("State '{}' doesn't inherit FSMClass".format(stateName))
-            else:
+            if stateName not in statesMap:
                 defaultState = FSMState(stateName)
                 defaultState.sync(self)
                 statesMap[stateName] = defaultState
 
-        if event not in tmap:
-            tmap[event] = {}
+        if event not in transactionMap:
+            transactionMap[event] = {}
 
         for state in src:
-            tmap[event][state] = dst
-
-
-
+            transactionMap[event][state] = dst
 
 
 class Fysom(object):
-
     '''
         Wraps the complete finite state machine operations.
     '''
@@ -339,7 +383,7 @@ class Fysom(object):
         return (
                 event in self.__map and
                 ((self.current in self.__map[event]) or _ALL_STATES in self.__map[event]) and not
-            hasattr(self, 'transition'))
+                hasattr(self, 'transition'))
 
     def cannot(self, event):
         '''
@@ -417,6 +461,7 @@ class Fysom(object):
             For every event in the state machine, prepares the event handler and
             registers the same into current object namespace.
         '''
+
         def fn(*args, **kwargs):
 
             if hasattr(self, 'transition'):
@@ -440,6 +485,7 @@ class Fysom(object):
             # callbacks.
             class _e_obj(object):
                 pass
+
             e = _e_obj()
             e.fsm, e.event, e.src, e.dst = self, event, src, dst
             for k in kwargs:
@@ -461,6 +507,7 @@ class Fysom(object):
                     self.__enter_state(e)
                     self.__change_state(e)
                     self.__after_event(e)
+
                 self.transition = _tran
 
                 # Hook to perform asynchronous transition.
@@ -782,6 +829,7 @@ class FysomGlobal(object):
                     self._enter_state(obj, e)
                     self._change_state(obj, e)
                     self._after_event(obj, e)
+
                 obj.transition = _trans
 
                 # Hook to perform asynchronous transition
