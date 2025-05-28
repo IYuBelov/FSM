@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-from Event import Event
 from LogUtils import LOG_ERROR
 
 MAX_TRANSITIONS = 100

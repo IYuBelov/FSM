@@ -6,7 +6,6 @@ import sys
 from typing import Dict, Any
 from typing import List
 from typing import Tuple
-from .Event import Event
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
