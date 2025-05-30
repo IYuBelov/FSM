@@ -152,16 +152,18 @@ class FSM(object):
         dsts = set()
         events = {}
         for transition in transitions:
-            src = transition['src']
-            dst = transition['dst']
-            dsts.add(src if dst == _SAME_DST else dst)
-            event = transition['event']
+            src = transition.get('src', _ALL_STATES)
             srcs = [src] if _is_base_string(src) else src
-            if src in srcs:
-                eventSet = events.get((src, dst), set())
-                if event in eventSet:
-                    raise FSMConfigError("duplicated event {}".format(event))
-                eventSet.add(transition['event'])
+            for src in srcs:
+                dst = transition['dst']
+                dsts.add(src if dst == _SAME_DST else dst)
+                event = transition['event']
+                srcs = [src] if _is_base_string(src) else src
+                if src in srcs:
+                    eventSet = events.get((src, dst), set())
+                    if event in eventSet:
+                        raise FSMConfigError("duplicated event {}".format(event))
+                    eventSet.add(transition['event'])
 
         final = cfg.get('final', None)
         if final is not None:
@@ -180,7 +182,8 @@ class FSM(object):
         transactionMap = {}
         self.__addTransaction(_INIT_STATE, initial['state'], initialEvent, statesMap, transactionMap)
         for transition in transitions:
-            self.__addTransaction(transition['src'], transition['dst'], transition['event'], statesMap, transactionMap)
+            src = transition.get('src', _ALL_STATES)
+            self.__addTransaction(src, transition['dst'], transition['event'], statesMap, transactionMap)
 
         self.__statesMap = statesMap  # type: Dict[str, FSMState]
         self.__transactionMap = transactionMap  # type: Dict[str, Dict[str, str]]

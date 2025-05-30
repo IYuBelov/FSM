@@ -43,7 +43,7 @@ class FysomWildcardTransitionTests(FysomManyToManyTransitionTests):
     }
 
     def test_if_src_not_specified_then_is_wildcard(self):
-        fsm = Fysom({
+        fsm = FSM({
             'initial': 'hungry',
             'events': [
                 {'name': 'eat', 'src': 'hungry', 'dst': 'satisfied'},
