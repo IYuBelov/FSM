@@ -1,5 +1,6 @@
 import functools
 import json
+import os.path
 import weakref
 import types
 import sys
@@ -9,7 +10,7 @@ from typing import Tuple
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import Optional, TypedDict
+    from typing import Optional, Type
     from FSM import Config
 
     PY3 = sys.version_info[0] >= 3
@@ -198,9 +199,14 @@ class FSM(object):
             self.addEvent(_INIT_EVENT_NAME)
 
     @classmethod
-    def makeSFMFromJSON(cls, json_file):  # type: (str) -> FSM
-        cfg = json.load(json_file)
-        return FSM(cfg)
+    def makeSFMFromJSON(cls, json_file, states):  # type: (str, List[FSMState]) -> FSM
+        if not os.path.exists(json_file):
+            raise FSMConfigError("File '{}' doesn't exist".format(json_file))
+
+        with open(json_file, 'r') as fd:
+            cfg = json.load(fd)
+            cfg['states'] = states
+            return cls(cfg)
 
     def fini(self):
         for name in self.__statesMap:

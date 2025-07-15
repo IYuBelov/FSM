@@ -1,0 +1,13 @@
+{
+    "initial": {"state": "prepare"},
+    "transitions": [
+        {"src": "prepare", "dst": "fly", "event": "evFly"},
+        {"src": ["fly", "prepareAttack"], "dst": "prepareAttack", "event": "evPrepareAttack"},
+        {"src": "*", "dst": "attack", "event": "evAttack"},
+        {"src": "attack", "dst": "prepareFly", "event": "evPrepareFly"},
+        {"src": "prepareFly", "dst": "fly", "event": "evFly"},
+        {"src": "attack", "dst": "comeback", "event": "evComeback"},
+        {"src": "comeback", "dst": "deactive", "event": "evDeactive"},
+        {"src": "fly", "dst": "comeback", "event": "evComeback"}
+    ]
+}
