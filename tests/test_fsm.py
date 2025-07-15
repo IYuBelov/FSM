@@ -1,3 +1,4 @@
+from __future__ import absolute_import, print_function
 import pytest
 from fsm.FSM import FSM, FSMState, FSMConfigError
 
@@ -31,7 +32,7 @@ class PrepareAttack(FSMState):
         pass
 
     def reenter(self, eventData):
-        print "REENTER", eventData
+        print("REENTER", eventData)
 
 
 #
