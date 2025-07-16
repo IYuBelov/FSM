@@ -4,6 +4,7 @@ import os.path
 import weakref
 import types
 import sys
+from collections.abc import Callable
 from typing import Dict, Any
 from typing import List
 from typing import Tuple
@@ -32,6 +33,8 @@ _ALL_STATES = '*'
 _SAME_DST = '='
 _INIT_STATE = '__default_root_state'
 _INIT_EVENT_NAME = '__default_root_setup_event'
+_UPDATE_EVENT = '__update_event'
+_MAX_TRANSITIONS = 100
 
 
 class FSMError(Exception):
@@ -120,6 +123,9 @@ class FSMState(object):
     def fsm(self):
         return self.__fsm
 
+    def sync(self, fsm):
+        self.__fsm = weakref.proxy(fsm)
+
     def fini(self):
         pass
 
@@ -132,11 +138,17 @@ class FSMState(object):
     def reenter(self, eventData):
         pass
 
+    def interrupt(self, eventData):
+        pass
+
+    def canTransit(self):
+        return True
+
+    def update(self, dt):
+        pass
+
     def addEvent(self, eventName, eventData=None):
         self.__fsm.addEvent(eventName, eventData)
-
-    def sync(self, fsm):
-        self.__fsm = weakref.proxy(fsm)
 
 
 class FSM(object):
@@ -144,54 +156,105 @@ class FSM(object):
         initial = cfg.get('initial')
         if initial is None:
             raise FSMConfigError("Config doesn't have 'initial' {}".format(cfg))
+        initialState = initial['state']
         initialEvent = initial.get('event', _INIT_EVENT_NAME)
 
         transitions = cfg.get('transitions')
         if transitions is None:
             raise FSMConfigError("Config doesn't have 'transitions' {}".format(cfg))
 
-        dsts = set()
-        events = {}
+        conditions = cfg.get('conditions', {})
+        for condName, cond in conditions.items():
+            if not callable(cond):
+                raise FSMConfigError("Condition '{}' is not callable".format(condName))
+
+        customStates = cfg.get('states', [])
+        for state in customStates:
+            if not isinstance(state, FSMState):
+                raise FSMConfigError("State '{}' doesn't inherit FSMClass".format(state))
+        customStatesMap = {state.name: state for state in customStates}
+
+        statesMap = {_INIT_STATE: FSMState(_INIT_STATE), initialState: customStatesMap.get(initialState, FSMState(initialState)) }
         for transition in transitions:
             src = transition.get('src', _ALL_STATES)
+            if _is_base_string(src):
+                if src != _ALL_STATES:
+                    if src not in statesMap:
+                        statesMap[src] = customStatesMap.get(src, FSMState(src))
+            else:
+                for source in src:
+                    if src == _ALL_STATES:
+                        raise FSMConfigError('State * you can use only without another states')
+                    if source not in statesMap:
+                        statesMap[source] = customStatesMap.get(source, FSMState(source))
+
+            dst = transition.get('dst')
+            dst = src if dst == _SAME_DST else dst
+            if dst != _ALL_STATES:
+                dsts = [dst] if _is_base_string(dst) else dst
+                for dst in dsts:
+                    if dst not in statesMap:
+                        statesMap[dst] = customStatesMap.get(dst, FSMState(dst))
+
+        dsts = set()
+        eventsCheck = {}
+        conditionsForCheck = {}
+        allActiveStates = [state for state in statesMap if state != _INIT_STATE]
+        for transition in transitions:
+            src = transition.get('src', _ALL_STATES)
+            src = allActiveStates if src == _ALL_STATES else src
             srcs = [src] if _is_base_string(src) else src
             for src in srcs:
                 dst = transition['dst']
                 dsts.add(src if dst == _SAME_DST else dst)
-                event = transition['event']
-                srcs = [src] if _is_base_string(src) else src
-                if src in srcs:
-                    eventSet = events.get((src, dst), set())
+                event = transition.get('event')
+                if event:
+                    eventSet = eventsCheck.get((src, dst), set())
                     if event in eventSet:
                         raise FSMConfigError("duplicated event {}".format(event))
                     eventSet.add(transition['event'])
+                else:
+                    conditionsSet = conditionsForCheck.get((src, dst), set())
+                    conditionName = transition.get('condition')
+                    condition = conditions.get(conditionName)
+                    if condition is None:
+                        raise FysomError("Condition '{}' doesn't exist".format(conditionName))
+                    if condition in conditionsSet:
+                        raise FysomError("Condition '{}' already exists".format(conditionName))
+                    conditionsSet.add(condition)
 
         final = cfg.get('final', None)
         if final is not None:
             if final not in dsts:
                 raise FSMConfigError("Final state '{}' doesn't have appropriate dst states".format(dsts))
 
-        states = cfg.get('states')
-        statesMap = {}
-        if states is not None:
-            for state in states:
-                if not isinstance(state, FSMState):
-                    raise FSMConfigError("State '{}' doesn't inherit FSMClass".format(state))
-                state.sync(self)
-            statesMap = {state.name: state for state in states}
+        for state in statesMap.values():
+            state.sync(self)
 
         transactionMap = {}
-        self.__addTransaction(_INIT_STATE, initial['state'], initialEvent, statesMap, transactionMap)
+        eventTransitionMap = {}
+        self.__addTransaction(statesMap[_INIT_STATE], statesMap[initialState], initialEvent, None, transactionMap, eventTransitionMap)
         for transition in transitions:
             src = transition.get('src', _ALL_STATES)
-            self.__addTransaction(src, transition['dst'], transition['event'], statesMap, transactionMap)
+            src = allActiveStates if src == _ALL_STATES else src
+            srcs = [src] if _is_base_string(src) else src
+            dst = transition['dst']
+            event = transition.get('event')
+            for src in srcs:
+                dstState = src if dst == _SAME_DST else dst
+                conditionName = transition.get('condition')
+                condition = conditions.get(conditionName)
+                self.__addTransaction(statesMap[src], statesMap[dstState], event, condition, transactionMap, eventTransitionMap)
 
         self.__statesMap = statesMap  # type: Dict[str, FSMState]
-        self.__transactionMap = transactionMap  # type: Dict[str, Dict[str, str]]
-        self.__currentState = _INIT_STATE  # type: str
+        self.__transactionMap = transactionMap  # type: Dict[str, Dict[str, Tuple[str, Callable[[], bool]]]]
+        self.__eventTransitionMap = eventTransitionMap  # type: Dict[str, Dict[str, Tuple[str, Callable[[], bool]]]]
+        self.__currentStateId = _INIT_STATE  # type: str
         self.__final = final  # type: str
         self.__newEvents = []  # type: List[Tuple[str, Any]]
         self.__isRunning = False
+        self.__isDestroyed = False
+        self.__transitionsCount = 0
         self.__callbacks = {}
 
         isCustomInitialEvent = 'event' in initial
@@ -216,6 +279,7 @@ class FSM(object):
         self.__callbacks.clear()
         del self.__newEvents[:]
         self.__isRunning = False
+        self.__isDestroyed = True
 
     def addCallback(self, fromState, toState, callback):
         callbacks = self.__callbacks.get((fromState, toState), [])
@@ -248,17 +312,82 @@ class FSM(object):
         '''
             Returns if the given event be fired in the current machine state.
         '''
-        return (event in self.__transactionMap and not self.isFinished() and
-                ((self.__currentState in self.__transactionMap[event]) or _ALL_STATES in self.__transactionMap[event]))
+        eventTransition = self.__eventTransitionMap.get(event)
+        if not eventTransition:
+            return False
+
+        dst = eventTransition.get(self.__currentStateId)
+        transition = self.__transactionMap.get(self.__currentStateId)
+        return not self.isFinished() and transition and dst in transition
 
     def getCurrentState(self):
-        return self.__currentState
+        return self.__currentStateId
 
     def isFinished(self):
         '''
             Returns if the state machine is in its final state.
         '''
-        return self.__final and (self.__currentState == self.__final)
+        return self.__final and (self.__currentStateId == self.__final)
+
+    def update(self, dt):  # type: (float) -> None
+        transitionCount = 0
+        while True:
+            transited = self.__updateTransitions()
+            if not transited or self.__isDestroyed:
+                break
+
+            transitionCount += 1
+            if transitionCount > _MAX_TRANSITIONS:
+                print("Finite state machine has exceeded the maximum amount of transitions per tick")
+                break
+
+        if not self.__isDestroyed:
+            self.__currentState.update(dt)
+
+    def __updateTransitions(self):
+        """
+        Attempts to transit to the next state. Transition can only happen if the current state is ready for it and if
+        conditions are satisfied for transition to another state. If conditions for multiple transitions are satisfied
+        then state machine will transit to the first valid state it encounters in self.__transitions.
+
+        :param args: arguments to condition checking method
+        :return: True if transition was successful, False otherwise
+        """
+        if not self.isFinished() and self.__currentState.canTransit() and self.__currentStateId in self.__transactionMap:
+            for dst, info in self.__transactionMap[self.__currentStateId].items():
+                event, condition = info
+                if condition and condition():
+                    self.__performTransition(dst, callback=None)
+                    return True
+        return False
+
+    def __performTransition(self, dst, callback, forced=False):
+        previousStateId = self.__currentStateId
+        if forced:
+            self.__currentState.interrupt({})
+        else:
+            self.__currentState.leave({})
+
+        self.__currentStateId = dst
+        self.__currentState.enter(self.__statesMap[previousStateId], {})
+
+        if callback:
+            callback()
+        # state machine might have been destroyed during new state activation
+        if not self.__isDestroyed:
+            self.__callCallbacks(previousStateId, self.__currentStateId)
+
+    @property
+    def __currentState(self):
+        return self.__statesMap[self.__currentStateId]
+
+    def __addUpdateEvent(self):
+        if self.__transitionsCount > _MAX_TRANSITIONS:
+            print("Finite state machine has exceeded the maximum amount of transitions per tick")
+            return
+
+        self.addEvent(_UPDATE_EVENT)
+        self.__transitionsCount += 1
 
     def __run(self):
         while self.__newEvents:
@@ -272,43 +401,36 @@ class FSM(object):
             eventData = {}
 
         if not self.can(eventName):
-            raise FSMError("event {} inappropriate in current state {}".format(eventName, self.__currentState))
+            raise FSMError("event {} inappropriate in current state {}".format(eventName, self.__currentStateId))
 
-        src = self.__currentState
         # Finds the destination state, after this event is completed.
-        dst = ((src in self.__transactionMap[eventName] and self.__transactionMap[eventName][src]) or
-               _ALL_STATES in self.__transactionMap[eventName] and self.__transactionMap[eventName][_ALL_STATES])
+        dst = self.__eventTransitionMap[eventName][self.__currentStateId]
+        info = self.__transactionMap[self.__currentStateId][dst]
 
-        if dst == _SAME_DST:
-            dst = src
+        event, cond = info
+        if cond is not None:
+            if not cond():
+                return
 
-        if self.__currentState != dst:
-            prevState = self.__statesMap[self.__currentState]
+        if self.__currentStateId != dst:
+            prevState = self.__statesMap[self.__currentStateId]
             prevState.leave(eventData)
 
-            self.__currentState = dst
-            currentState = self.__statesMap[self.__currentState]
+            self.__currentStateId = dst
+            currentState = self.__statesMap[self.__currentStateId]
             currentState.enter(prevState, eventData)
 
             self.__callCallbacks(prevState, currentState)
         else:
-            currentState = self.__statesMap[self.__currentState]
+            currentState = self.__statesMap[self.__currentStateId]
             currentState.reenter(eventData)
 
-    def __addTransaction(self, src, dst, event, statesMap, transactionMap):
-        src = [src] if _is_base_string(src) else src
-        transactionStates = src + [dst]
-        for stateName in transactionStates:
-            if stateName not in statesMap:
-                defaultState = FSMState(stateName)
-                defaultState.sync(self)
-                statesMap[stateName] = defaultState
+    def __addTransaction(self, src, dst, event, condition, transactionMap, eventTransitionMap):
+        transitions = transactionMap.setdefault(src.name, {})
+        transitions[dst.name] = (event, condition)
 
-        if event not in transactionMap:
-            transactionMap[event] = {}
-
-        for state in src:
-            transactionMap[event][state] = dst
+        eventTransition = eventTransitionMap.setdefault(event, {})
+        eventTransition[src.name] = dst.name
 
 
 class Fysom(object):

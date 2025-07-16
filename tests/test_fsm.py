@@ -72,6 +72,43 @@ def test_sfm_init():
     assert sfm.getCurrentState() == 'attack'
 
 
+CONFIG_WITH_CONDITIONS = {
+    "initial": {"state": "prepare"},
+    "transitions": [
+        {"src": "prepare", "dst": "fly", "condition": "cond1"},
+        {"src": ["fly", 'prepareAttack'], "dst": "evAttack", "condition": "cond2"},
+        # {"src": "*", "dst": "attack", "event": "evAttack"},
+        # {"src": "attack", "dst": "prepareFly", "event": "evPrepareFly"},
+        # {"src": "prepareFly", "dst": "fly", "event": "evFly"},
+        # {"src": "attack", "dst": "comeback", "event": "evComeback"},
+        # {"src": "comeback", "dst": "deactive", "event": "evDeactive"},
+        # {"src": "fly", "dst": "comeback", "event": "evComeback"}
+    ],
+    "final": "evAttack",
+    "states": [
+        Prepare('prepare'),
+        Fly('fly'),
+        PrepareAttack('prepareAttack'),
+    ],
+    "conditions": {
+        'cond1': lambda: True,
+        'cond2': lambda: False,
+    }
+}
+
+def test_sfm_init_with_conditions():
+    sfm = FSM(CONFIG_WITH_CONDITIONS)
+    assert sfm.getCurrentState() == 'prepare'
+    sfm.update(0)
+    assert sfm.getCurrentState() == 'fly'
+    # sfm.addEvent('evPrepareAttack')
+    # assert sfm.getCurrentState() == 'prepareAttack'
+    # sfm.addEvent('evPrepareAttack', {'Hellow': 1})
+    # assert sfm.getCurrentState() == 'prepareAttack'
+    # sfm.addEvent('evAttack')
+    # assert sfm.getCurrentState() == 'attack'
+
+
 class IncorrectType(object):
     def __init__(self, name):
         self.__name = name
